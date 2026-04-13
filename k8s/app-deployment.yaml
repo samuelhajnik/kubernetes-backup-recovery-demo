@@ -1,0 +1,42 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backup-recovery-demo-app
+  namespace: backup-recovery-demo
+  labels:
+    app: backup-recovery-demo-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: backup-recovery-demo-app
+  template:
+    metadata:
+      labels:
+        app: backup-recovery-demo-app
+    spec:
+      containers:
+        - name: app
+          image: kubernetes-backup-recovery-demo-app:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 2
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 20
+          volumeMounts:
+            - name: app-data
+              mountPath: /data
+      volumes:
+        - name: app-data
+          persistentVolumeClaim:
+            claimName: app-data-pvc

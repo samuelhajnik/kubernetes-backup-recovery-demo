@@ -1,0 +1,41 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: restore-data-job
+  namespace: backup-recovery-demo
+  labels:
+    app: backup-recovery-demo-restore
+spec:
+  template:
+    metadata:
+      labels:
+        app: backup-recovery-demo-restore
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: restore
+          image: alpine:3.20
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              chmod +x /scripts/restore.sh
+              /scripts/restore.sh
+          volumeMounts:
+            - name: app-data
+              mountPath: /data
+            - name: backup-storage
+              mountPath: /backup
+            - name: scripts
+              mountPath: /scripts
+      volumes:
+        - name: app-data
+          persistentVolumeClaim:
+            claimName: app-data-pvc
+        - name: backup-storage
+          persistentVolumeClaim:
+            claimName: backup-storage-pvc
+        - name: scripts
+          configMap:
+            name: backup-restore-scripts
+  backoffLimit: 0

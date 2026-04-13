@@ -1,0 +1,65 @@
+#!/bin/sh
+set -eu
+
+SOURCE_FILE="/data/data.jsonl"
+BACKUP_FILE="/backup/data.jsonl"
+METADATA_FILE="/backup/metadata.json"
+BACKUP_MODE="${BACKUP_MODE:-crash-consistent}"
+APP_BASE_URL="${APP_BASE_URL:-http://backup-recovery-demo-app.backup-recovery-demo.svc.cluster.local:8080}"
+FROZEN=0
+
+post_endpoint() {
+  endpoint="$1"
+  wget -q -O /dev/null --post-data='' "$APP_BASE_URL/$endpoint"
+}
+
+cleanup() {
+  if [ "$FROZEN" -eq 1 ]; then
+    echo "attempting unfreeze after backup flow"
+    if post_endpoint "unfreeze"; then
+      echo "app unfreeze completed"
+      FROZEN=0
+    else
+      echo "failed to unfreeze app at $APP_BASE_URL/unfreeze" >&2
+    fi
+  fi
+}
+
+trap cleanup EXIT
+
+echo "backup mode: $BACKUP_MODE"
+
+echo "backup started: $SOURCE_FILE -> $BACKUP_FILE"
+
+if [ "$BACKUP_MODE" = "application-consistent" ]; then
+  echo "requesting app freeze at $APP_BASE_URL/freeze"
+  post_endpoint "freeze"
+  FROZEN=1
+  echo "app freeze completed"
+elif [ "$BACKUP_MODE" != "crash-consistent" ]; then
+  echo "backup failed: unsupported BACKUP_MODE=$BACKUP_MODE" >&2
+  exit 1
+fi
+
+if [ ! -f "$SOURCE_FILE" ]; then
+  echo "backup failed: source file not found at $SOURCE_FILE" >&2
+  exit 1
+fi
+
+cp "$SOURCE_FILE" "$BACKUP_FILE"
+CHECKSUM="$(sha256sum "$SOURCE_FILE" | awk '{print $1}')"
+TIMESTAMP="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+
+printf '{"timestamp":"%s","source_file":"%s","backup_file":"%s","checksum":"%s"}\n' \
+  "$TIMESTAMP" "$SOURCE_FILE" "$BACKUP_FILE" "$CHECKSUM" > "$METADATA_FILE"
+
+echo "backup completed: $SOURCE_FILE -> $BACKUP_FILE"
+echo "backup metadata written: $METADATA_FILE"
+echo "backup checksum: $CHECKSUM"
+
+if [ "$FROZEN" -eq 1 ]; then
+  echo "requesting app unfreeze at $APP_BASE_URL/unfreeze"
+  post_endpoint "unfreeze"
+  FROZEN=0
+  echo "app unfreeze completed"
+fi
