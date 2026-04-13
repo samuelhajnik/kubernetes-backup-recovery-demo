@@ -8,6 +8,10 @@ FROZEN=0
 TIMESTAMP="$(date -u +"%Y-%m-%dT%H-%M-%SZ")"
 BACKUP_FILE="/backup/data-$TIMESTAMP.jsonl"
 METADATA_FILE="/backup/metadata-$TIMESTAMP.json"
+STATUS_FILE="/backup/backup-status.json"
+BACKUP_FILE_NAME="$(basename "$BACKUP_FILE")"
+CHECKSUM=""
+STATUS_MESSAGE="backup failed"
 
 post_endpoint() {
   endpoint="$1"
@@ -15,6 +19,23 @@ post_endpoint() {
 }
 
 cleanup() {
+  exit_code="$1"
+
+  if [ "$exit_code" -eq 0 ]; then
+    STATUS_VALUE="success"
+    if [ -n "$STATUS_MESSAGE" ]; then
+      MESSAGE="$STATUS_MESSAGE"
+    else
+      MESSAGE="backup completed"
+    fi
+  else
+    STATUS_VALUE="failure"
+    MESSAGE="$STATUS_MESSAGE"
+  fi
+
+  printf '{"operation":"backup","timestamp":"%s","status":"%s","mode":"%s","backup_file":"%s","checksum":"%s","message":"%s"}\n' \
+    "$TIMESTAMP" "$STATUS_VALUE" "$BACKUP_MODE" "$BACKUP_FILE_NAME" "$CHECKSUM" "$MESSAGE" > "$STATUS_FILE"
+
   if [ "$FROZEN" -eq 1 ]; then
     echo "attempting unfreeze after backup flow"
     if post_endpoint "unfreeze"; then
@@ -26,7 +47,7 @@ cleanup() {
   fi
 }
 
-trap cleanup EXIT
+trap 'cleanup $?' EXIT
 
 echo "backup mode: $BACKUP_MODE"
 
@@ -38,12 +59,14 @@ if [ "$BACKUP_MODE" = "application-consistent" ]; then
   FROZEN=1
   echo "app freeze completed"
 elif [ "$BACKUP_MODE" != "crash-consistent" ]; then
-  echo "backup failed: unsupported BACKUP_MODE=$BACKUP_MODE" >&2
+  STATUS_MESSAGE="unsupported BACKUP_MODE=$BACKUP_MODE"
+  echo "backup failed: $STATUS_MESSAGE" >&2
   exit 1
 fi
 
 if [ ! -f "$SOURCE_FILE" ]; then
-  echo "backup failed: source file not found at $SOURCE_FILE" >&2
+  STATUS_MESSAGE="source file not found at $SOURCE_FILE"
+  echo "backup failed: $STATUS_MESSAGE" >&2
   exit 1
 fi
 
@@ -54,8 +77,10 @@ printf '{"timestamp":"%s","source_file":"%s","backup_file":"%s","checksum":"%s"}
   "$TIMESTAMP" "$SOURCE_FILE" "$BACKUP_FILE" "$CHECKSUM" > "$METADATA_FILE"
 
 echo "backup completed: $SOURCE_FILE -> $BACKUP_FILE"
+echo "backup file created: $BACKUP_FILE"
 echo "backup metadata written: $METADATA_FILE"
 echo "backup checksum: $CHECKSUM"
+STATUS_MESSAGE="backup completed"
 
 if [ "$FROZEN" -eq 1 ]; then
   echo "requesting app unfreeze at $APP_BASE_URL/unfreeze"

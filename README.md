@@ -1,5 +1,16 @@
 # Kubernetes Backup & Recovery Demo
 
+## What this demo shows
+
+- Stateful application backup and recovery workflow in Kubernetes.
+- Crash-consistent and application-consistent backup modes.
+- Difference between crash-consistent and application-consistent backups.
+- Versioned snapshots retained in backup storage.
+- Metadata and checksum generation for each snapshot.
+- Restore-time integrity verification using checksum comparison.
+- Scheduled backups using a CronJob for automation demos.
+- Failure scenarios that validate recovery and error handling behavior.
+
 ## Goal
 
 Explore backup and recovery in Kubernetes with emphasis on **data consistency**, **failure scenarios**, and **system recovery**—what breaks, what must be preserved, and how to validate that a restore is trustworthy.
@@ -164,7 +175,10 @@ kubectl -n backup-recovery-demo get pods
 kubectl -n backup-recovery-demo logs deploy/backup-recovery-demo-app
 kubectl -n backup-recovery-demo describe job backup-data-job
 kubectl -n backup-recovery-demo describe job restore-data-job
+curl -s http://localhost:8080/backup-status
 ```
+
+`/backup-status` returns the latest known backup result (mode, snapshot file, checksum, and success/failure message), or `status: unknown` if no backup has run yet.
 
 ## Scheduled Backups
 
@@ -180,9 +194,13 @@ Backups are stored as versioned snapshots (for example `data-2026-04-10T18-30-00
 
 Restore automatically selects the latest snapshot and verifies it using the checksum from the matching metadata file.
 
+Backups are not automatically pruned in this demo. Real systems require retention policies, for example keeping the last N snapshots or using time-based retention windows.
+
 ## Failure Scenarios to Test
 
 ### A) Data loss
+
+This simulates application-level data loss while persistent backup snapshots still exist.
 
 ```bash
 POD=$(kubectl -n backup-recovery-demo get pod -l app=backup-recovery-demo-app -o jsonpath='{.items[0].metadata.name}')
@@ -198,6 +216,8 @@ Expected outcome: read output is empty after truncation, then previous data retu
 
 ### B) Pod restart
 
+This simulates runtime pod failure while PVC-backed data remains intact.
+
 ```bash
 kubectl -n backup-recovery-demo delete pod -l app=backup-recovery-demo-app
 kubectl -n backup-recovery-demo wait --for=condition=Ready pod -l app=backup-recovery-demo-app --timeout=120s
@@ -207,6 +227,8 @@ curl -s http://localhost:8080/read
 Expected outcome: a new pod is created and data is still present because it is stored on the PVC.
 
 ### C) Backup corruption
+
+This simulates tampered backup content to validate checksum-based integrity detection.
 
 ```bash
 POD=$(kubectl -n backup-recovery-demo get pod -l app=backup-recovery-demo-app -o jsonpath='{.items[0].metadata.name}')
@@ -222,6 +244,8 @@ Expected outcome: restore fails and logs show checksum mismatch.
 
 ### D) Missing backup
 
+This simulates a restore attempt when backup artifacts are missing.
+
 ```bash
 POD=$(kubectl -n backup-recovery-demo get pod -l app=backup-recovery-demo-app -o jsonpath='{.items[0].metadata.name}')
 kubectl -n backup-recovery-demo exec "$POD" -- sh -c 'rm -f /backup/data-*.jsonl /backup/metadata-*.json'
@@ -232,3 +256,77 @@ kubectl -n backup-recovery-demo logs job/restore-data-job
 ```
 
 Expected outcome: restore fails because no backup snapshots are available.
+
+## Visual Workflow Overview
+
+### High-Level Architecture
+
+```text
+                    +------------------------------+
+                    | CronJob (optional, periodic)|
+                    | backup-data-cronjob         |
+                    +---------------+--------------+
+                                    |
++-------------------+      +--------v--------+       +----------------------+
+| App Pod           |      | Backup Job      |       | Restore Job          |
+| (HTTP API)        |      | backup-data-job |       | restore-data-job     |
+| /write /read      |      +--------+--------+       +----------+-----------+
+| /backup-status    |               |                           |
++---------+---------+               |                           |
+          |                         |                           |
+          v                         v                           v
+   +------+-------+          +------+-------------------------------+
+   | app-data-pvc |<-------->| backup-storage-pvc (/backup snapshots)|
+   | (/data)      |          | data-*.jsonl, metadata-*.json, status |
+   +--------------+          +----------------------------------------+
+```
+
+### Backup Flow
+
+```text
+App writes data -> /data/data.jsonl
+        |
+        v
+Backup Job starts (crash-consistent or application-consistent)
+        |
+        +-> optional freeze/unfreeze around copy
+        |
+        +-> copy /data/data.jsonl -> /backup/data-<timestamp>.jsonl
+        +-> write /backup/metadata-<timestamp>.json (checksum + paths)
+        +-> write /backup/backup-status.json (latest operation status)
+```
+
+### Restore Flow
+
+```text
+Restore Job starts
+    |
+    +-> select latest /backup/data-*.jsonl
+    +-> locate matching /backup/metadata-*.json
+    +-> copy snapshot -> /data/data.jsonl
+    +-> verify checksum from metadata
+    +-> app serves restored data via /read
+```
+
+### How the Pieces Fit Together
+
+- App owns live state and serves API endpoints.
+- `app-data-pvc` stores live application data under `/data`.
+- `backup-storage-pvc` stores versioned snapshots, metadata, and backup status under `/backup`.
+- Backup/restore Jobs move data between PVCs.
+- Checksums validate integrity during restore.
+
+## What these scenarios demonstrate
+
+- Backups are only useful when restore is validated end-to-end.
+- Checksum verification is required to detect silent corruption.
+- PVC-backed data survives pod restarts, but not application-level data loss.
+- Restore workflows must fail clearly on missing or invalid backup artifacts.
+- Operational confidence comes from regularly exercising failure and recovery paths.
+
+## Limitations
+
+- This is a simplified demo focused on core backup and recovery concepts.
+- Storage assumptions are single-cluster and demo-oriented, not production-hardened.
+- There is no distributed coordination across multiple services or components.
+- Operational concerns like advanced retention, security hardening, and DR orchestration are intentionally out of scope.

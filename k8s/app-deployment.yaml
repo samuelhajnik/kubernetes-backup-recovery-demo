@@ -36,7 +36,12 @@ spec:
           volumeMounts:
             - name: app-data
               mountPath: /data
+            - name: backup-storage
+              mountPath: /backup
       volumes:
         - name: app-data
           persistentVolumeClaim:
             claimName: app-data-pvc
+        - name: backup-storage
+          persistentVolumeClaim:
+            claimName: backup-storage-pvc

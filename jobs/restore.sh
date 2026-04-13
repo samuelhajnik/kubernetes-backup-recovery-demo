@@ -2,10 +2,15 @@
 set -eu
 
 TARGET_FILE="/data/data.jsonl"
-BACKUP_FILE="$(ls -1 /backup/data-*.jsonl 2>/dev/null | sort | tail -n 1)"
+BACKUP_FILE="$(ls -1 /backup/data-*.jsonl 2>/dev/null | sort -r | head -n 1)"
 
 if [ -z "$BACKUP_FILE" ]; then
   echo "restore failed: no versioned backup files found in /backup" >&2
+  exit 1
+fi
+
+if [ ! -f "$BACKUP_FILE" ]; then
+  echo "restore failed: selected backup file does not exist" >&2
   exit 1
 fi
 

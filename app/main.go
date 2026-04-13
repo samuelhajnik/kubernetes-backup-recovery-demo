@@ -12,14 +12,16 @@ import (
 )
 
 const (
-	defaultDataFile = "/data/data.jsonl"
-	defaultAddr     = ":8080"
+	defaultDataFile         = "/data/data.jsonl"
+	defaultAddr             = ":8080"
+	defaultBackupStatusFile = "/backup/backup-status.json"
 )
 
 type server struct {
-	dataFile string
-	mu       sync.Mutex
-	frozen   bool
+	dataFile         string
+	backupStatusFile string
+	mu               sync.Mutex
+	frozen           bool
 }
 
 type writeRequest struct {
@@ -30,18 +32,20 @@ type jsonResponse map[string]any
 
 func main() {
 	dataFile := getenvOrDefault("DATA_FILE_PATH", defaultDataFile)
+	backupStatusFile := getenvOrDefault("BACKUP_STATUS_FILE_PATH", defaultBackupStatusFile)
 	addr := getenvOrDefault("ADDR", defaultAddr)
 
 	if err := ensureDataPath(dataFile); err != nil {
 		log.Fatalf("failed to prepare data path: %v", err)
 	}
 
-	s := &server{dataFile: dataFile}
+	s := &server{dataFile: dataFile, backupStatusFile: backupStatusFile}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", s.handleHealth)
 	mux.HandleFunc("/write", s.handleWrite)
 	mux.HandleFunc("/read", s.handleRead)
+	mux.HandleFunc("/backup-status", s.handleBackupStatus)
 	mux.HandleFunc("/freeze", s.handleFreeze)
 	mux.HandleFunc("/unfreeze", s.handleUnfreeze)
 
@@ -184,6 +188,33 @@ func (s *server) handleRead(w http.ResponseWriter, r *http.Request) {
 		"items": items,
 		"count": len(items),
 	})
+}
+
+func (s *server) handleBackupStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w, r.Method, http.MethodGet)
+		return
+	}
+
+	content, err := os.ReadFile(s.backupStatusFile)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			writeJSON(w, http.StatusOK, jsonResponse{
+				"status":  "unknown",
+				"message": "no backup has been executed yet",
+			})
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to read backup status")
+		return
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(content, &payload); err != nil {
+		writeError(w, http.StatusInternalServerError, "backup status file is invalid")
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
 }
 
 func ensureDataPath(dataFile string) error {
