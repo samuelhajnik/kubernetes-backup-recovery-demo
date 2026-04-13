@@ -56,6 +56,112 @@ External Storage (simulated)
 
 ## Status
 
-Initial design — implementation to follow.
+MVP implemented — backup and restore workflow with checksum verification is functional.
 
-The goal is to evolve this into a hands-on demo that explores real failure and recovery scenarios.
+Future work will focus on deeper consistency guarantees, failure scenarios, and recovery validation.
+
+## Backup Consistency Modes
+
+This demo supports two backup modes:
+
+- `crash-consistent`: copy data without coordinating with the app.
+- `application-consistent`: call `POST /freeze`, run backup, then call `POST /unfreeze`.
+
+Application-consistent mode matters during active writes because it prevents new writes while the backup copy is taken, reducing the chance of inconsistent snapshots.
+
+## How to Run & Demo
+
+### 1) Build and load image
+
+```bash
+docker build -t kubernetes-backup-recovery-demo-app:latest ./app
+kind load docker-image kubernetes-backup-recovery-demo-app:latest
+```
+
+### 2) Deploy everything
+
+```bash
+kubectl apply -f k8s/namespace.yaml
+kubectl apply -f k8s/pvc.yaml
+kubectl apply -f k8s/backup-pvc.yaml
+kubectl apply -f k8s/app-deployment.yaml
+kubectl apply -f k8s/app-service.yaml
+kubectl apply -f k8s/scripts-configmap.yaml
+```
+
+```bash
+kubectl -n backup-recovery-demo get pods,pvc,svc
+```
+
+### 3) Generate data
+
+```bash
+kubectl -n backup-recovery-demo port-forward svc/backup-recovery-demo-app 8080:8080
+```
+
+In a second terminal:
+
+```bash
+curl -s -X POST http://localhost:8080/write -H 'Content-Type: application/json' -d '{"data":{"id":1,"msg":"alpha"}}'
+curl -s -X POST http://localhost:8080/write -H 'Content-Type: application/json' -d '{"data":{"id":2,"msg":"beta"}}'
+curl -s -X POST http://localhost:8080/write -H 'Content-Type: application/json' -d '{"data":{"id":3,"msg":"gamma"}}'
+```
+
+### 4) Verify data
+
+```bash
+curl -s http://localhost:8080/read
+```
+
+Confirm `count` is greater than `0` and `items` contains the written records.
+
+### 5) Run backup
+
+```bash
+kubectl -n backup-recovery-demo delete job backup-data-job --ignore-not-found
+kubectl apply -f k8s/backup-job.yaml
+kubectl -n backup-recovery-demo wait --for=condition=complete job/backup-data-job --timeout=60s
+kubectl -n backup-recovery-demo logs job/backup-data-job
+```
+
+To test application-consistent mode, change `BACKUP_MODE` in `k8s/backup-job.yaml` from `crash-consistent` to `application-consistent` before applying the Job.
+
+Expected log includes: `backup completed: /data/data.jsonl -> /backup/data.jsonl`.
+
+### 6) Simulate failure
+
+Overwrite the app data file in the running pod:
+
+```bash
+POD=$(kubectl -n backup-recovery-demo get pod -l app=backup-recovery-demo-app -o jsonpath='{.items[0].metadata.name}')
+kubectl -n backup-recovery-demo exec "$POD" -- sh -c ': > /data/data.jsonl'
+curl -s http://localhost:8080/read
+```
+
+Confirm `count` is `0`.
+
+### 7) Run restore
+
+```bash
+kubectl -n backup-recovery-demo delete job restore-data-job --ignore-not-found
+kubectl apply -f k8s/restore-job.yaml
+kubectl -n backup-recovery-demo wait --for=condition=complete job/restore-data-job --timeout=60s
+kubectl -n backup-recovery-demo logs job/restore-data-job
+```
+
+### 8) Verify recovery
+
+```bash
+curl -s http://localhost:8080/read
+```
+
+Confirm the previous records are back.
+
+### 9) Observability hints
+
+```bash
+kubectl -n backup-recovery-demo get pods
+kubectl -n backup-recovery-demo logs deploy/backup-recovery-demo-app
+kubectl -n backup-recovery-demo describe job backup-data-job
+kubectl -n backup-recovery-demo describe job restore-data-job
+```
