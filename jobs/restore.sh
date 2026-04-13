@@ -1,14 +1,15 @@
 #!/bin/sh
 set -eu
 
-BACKUP_FILE="/backup/data.jsonl"
 TARGET_FILE="/data/data.jsonl"
-METADATA_FILE="/backup/metadata.json"
+BACKUP_FILE="$(ls -1 /backup/data-*.jsonl 2>/dev/null | sort | tail -n 1)"
 
-if [ ! -f "$BACKUP_FILE" ]; then
-  echo "restore failed: backup file not found at $BACKUP_FILE" >&2
+if [ -z "$BACKUP_FILE" ]; then
+  echo "restore failed: no versioned backup files found in /backup" >&2
   exit 1
 fi
+
+METADATA_FILE="/backup/metadata-$(basename "$BACKUP_FILE" | sed 's/^data-//; s/\.jsonl$//').json"
 
 if [ ! -f "$METADATA_FILE" ]; then
   echo "restore failed: metadata file not found at $METADATA_FILE" >&2
@@ -29,5 +30,6 @@ if [ "$ACTUAL_CHECKSUM" != "$EXPECTED_CHECKSUM" ]; then
   exit 1
 fi
 
+echo "restore using latest backup file: $BACKUP_FILE"
 echo "restore completed: $BACKUP_FILE -> $TARGET_FILE"
 echo "verification successful: checksum $ACTUAL_CHECKSUM"

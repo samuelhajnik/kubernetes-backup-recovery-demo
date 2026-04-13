@@ -9,11 +9,12 @@ data:
     set -eu
 
     SOURCE_FILE="/data/data.jsonl"
-    BACKUP_FILE="/backup/data.jsonl"
-    METADATA_FILE="/backup/metadata.json"
     BACKUP_MODE="${BACKUP_MODE:-crash-consistent}"
     APP_BASE_URL="${APP_BASE_URL:-http://backup-recovery-demo-app.backup-recovery-demo.svc.cluster.local:8080}"
     FROZEN=0
+    TIMESTAMP="$(date -u +"%Y-%m-%dT%H-%M-%SZ")"
+    BACKUP_FILE="/backup/data-$TIMESTAMP.jsonl"
+    METADATA_FILE="/backup/metadata-$TIMESTAMP.json"
 
     post_endpoint() {
       endpoint="$1"
@@ -55,7 +56,6 @@ data:
 
     cp "$SOURCE_FILE" "$BACKUP_FILE"
     CHECKSUM="$(sha256sum "$SOURCE_FILE" | awk '{print $1}')"
-    TIMESTAMP="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 
     printf '{"timestamp":"%s","source_file":"%s","backup_file":"%s","checksum":"%s"}\n' \
       "$TIMESTAMP" "$SOURCE_FILE" "$BACKUP_FILE" "$CHECKSUM" > "$METADATA_FILE"
@@ -74,14 +74,15 @@ data:
     #!/bin/sh
     set -eu
 
-    BACKUP_FILE="/backup/data.jsonl"
     TARGET_FILE="/data/data.jsonl"
-    METADATA_FILE="/backup/metadata.json"
+    BACKUP_FILE="$(ls -1 /backup/data-*.jsonl 2>/dev/null | sort | tail -n 1)"
 
-    if [ ! -f "$BACKUP_FILE" ]; then
-      echo "restore failed: backup file not found at $BACKUP_FILE" >&2
+    if [ -z "$BACKUP_FILE" ]; then
+      echo "restore failed: no versioned backup files found in /backup" >&2
       exit 1
     fi
+
+    METADATA_FILE="/backup/metadata-$(basename "$BACKUP_FILE" | sed 's/^data-//; s/\.jsonl$//').json"
 
     if [ ! -f "$METADATA_FILE" ]; then
       echo "restore failed: metadata file not found at $METADATA_FILE" >&2
@@ -102,5 +103,6 @@ data:
       exit 1
     fi
 
+    echo "restore using latest backup file: $BACKUP_FILE"
     echo "restore completed: $BACKUP_FILE -> $TARGET_FILE"
     echo "verification successful: checksum $ACTUAL_CHECKSUM"

@@ -165,3 +165,70 @@ kubectl -n backup-recovery-demo logs deploy/backup-recovery-demo-app
 kubectl -n backup-recovery-demo describe job backup-data-job
 kubectl -n backup-recovery-demo describe job restore-data-job
 ```
+
+## Scheduled Backups
+
+This demo also includes a Kubernetes CronJob for periodic backups in `k8s/backup-cronjob.yaml`.
+
+The CronJob reuses the same backup container setup and script flow, and runs every 2 minutes for demonstration.
+
+This is useful as a simple foundation for automated backup strategies without changing the core backup/restore workflow.
+
+## Backup Versioning
+
+Backups are stored as versioned snapshots (for example `data-2026-04-10T18-30-00Z.jsonl`) with matching metadata files (`metadata-2026-04-10T18-30-00Z.json`), so multiple snapshots are retained.
+
+Restore automatically selects the latest snapshot and verifies it using the checksum from the matching metadata file.
+
+## Failure Scenarios to Test
+
+### A) Data loss
+
+```bash
+POD=$(kubectl -n backup-recovery-demo get pod -l app=backup-recovery-demo-app -o jsonpath='{.items[0].metadata.name}')
+kubectl -n backup-recovery-demo exec "$POD" -- sh -c ': > /data/data.jsonl'
+curl -s http://localhost:8080/read
+kubectl -n backup-recovery-demo delete job restore-data-job --ignore-not-found
+kubectl apply -f k8s/restore-job.yaml
+kubectl -n backup-recovery-demo wait --for=condition=complete job/restore-data-job --timeout=60s
+curl -s http://localhost:8080/read
+```
+
+Expected outcome: read output is empty after truncation, then previous data returns after restore.
+
+### B) Pod restart
+
+```bash
+kubectl -n backup-recovery-demo delete pod -l app=backup-recovery-demo-app
+kubectl -n backup-recovery-demo wait --for=condition=Ready pod -l app=backup-recovery-demo-app --timeout=120s
+curl -s http://localhost:8080/read
+```
+
+Expected outcome: a new pod is created and data is still present because it is stored on the PVC.
+
+### C) Backup corruption
+
+```bash
+POD=$(kubectl -n backup-recovery-demo get pod -l app=backup-recovery-demo-app -o jsonpath='{.items[0].metadata.name}')
+LATEST_BACKUP=$(kubectl -n backup-recovery-demo exec "$POD" -- sh -c "ls -1 /backup/data-*.jsonl 2>/dev/null | sort | tail -n 1")
+kubectl -n backup-recovery-demo exec "$POD" -- sh -c "echo 'corruption' >> \"$LATEST_BACKUP\""
+kubectl -n backup-recovery-demo delete job restore-data-job --ignore-not-found
+kubectl apply -f k8s/restore-job.yaml
+kubectl -n backup-recovery-demo wait --for=condition=failed job/restore-data-job --timeout=60s
+kubectl -n backup-recovery-demo logs job/restore-data-job
+```
+
+Expected outcome: restore fails and logs show checksum mismatch.
+
+### D) Missing backup
+
+```bash
+POD=$(kubectl -n backup-recovery-demo get pod -l app=backup-recovery-demo-app -o jsonpath='{.items[0].metadata.name}')
+kubectl -n backup-recovery-demo exec "$POD" -- sh -c 'rm -f /backup/data-*.jsonl /backup/metadata-*.json'
+kubectl -n backup-recovery-demo delete job restore-data-job --ignore-not-found
+kubectl apply -f k8s/restore-job.yaml
+kubectl -n backup-recovery-demo wait --for=condition=failed job/restore-data-job --timeout=60s
+kubectl -n backup-recovery-demo logs job/restore-data-job
+```
+
+Expected outcome: restore fails because no backup snapshots are available.

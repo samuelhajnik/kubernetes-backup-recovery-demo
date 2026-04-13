@@ -1,0 +1,52 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: backup-data-cronjob
+  namespace: backup-recovery-demo
+  labels:
+    app: backup-recovery-demo-backup
+spec:
+  schedule: "*/2 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      template:
+        metadata:
+          labels:
+            app: backup-recovery-demo-backup
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: backup
+              image: alpine:3.20
+              env:
+                - name: BACKUP_MODE
+                  value: crash-consistent
+                - name: APP_BASE_URL
+                  value: http://backup-recovery-demo-app.backup-recovery-demo.svc.cluster.local:8080
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -eu
+                  chmod +x /scripts/backup.sh
+                  /scripts/backup.sh
+              volumeMounts:
+                - name: app-data
+                  mountPath: /data
+                - name: backup-storage
+                  mountPath: /backup
+                - name: scripts
+                  mountPath: /scripts
+          volumes:
+            - name: app-data
+              persistentVolumeClaim:
+                claimName: app-data-pvc
+            - name: backup-storage
+              persistentVolumeClaim:
+                claimName: backup-storage-pvc
+            - name: scripts
+              configMap:
+                name: backup-restore-scripts

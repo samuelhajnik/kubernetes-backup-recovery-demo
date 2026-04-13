@@ -2,11 +2,12 @@
 set -eu
 
 SOURCE_FILE="/data/data.jsonl"
-BACKUP_FILE="/backup/data.jsonl"
-METADATA_FILE="/backup/metadata.json"
 BACKUP_MODE="${BACKUP_MODE:-crash-consistent}"
 APP_BASE_URL="${APP_BASE_URL:-http://backup-recovery-demo-app.backup-recovery-demo.svc.cluster.local:8080}"
 FROZEN=0
+TIMESTAMP="$(date -u +"%Y-%m-%dT%H-%M-%SZ")"
+BACKUP_FILE="/backup/data-$TIMESTAMP.jsonl"
+METADATA_FILE="/backup/metadata-$TIMESTAMP.json"
 
 post_endpoint() {
   endpoint="$1"
@@ -48,7 +49,6 @@ fi
 
 cp "$SOURCE_FILE" "$BACKUP_FILE"
 CHECKSUM="$(sha256sum "$SOURCE_FILE" | awk '{print $1}')"
-TIMESTAMP="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 
 printf '{"timestamp":"%s","source_file":"%s","backup_file":"%s","checksum":"%s"}\n' \
   "$TIMESTAMP" "$SOURCE_FILE" "$BACKUP_FILE" "$CHECKSUM" > "$METADATA_FILE"
