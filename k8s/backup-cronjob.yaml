@@ -31,7 +31,6 @@ spec:
               args:
                 - |
                   set -eu
-                  chmod +x /scripts/backup.sh
                   /scripts/backup.sh
               volumeMounts:
                 - name: app-data
@@ -50,3 +49,4 @@ spec:
             - name: scripts
               configMap:
                 name: backup-restore-scripts
+                defaultMode: 0755
