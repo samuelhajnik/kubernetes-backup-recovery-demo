@@ -436,7 +436,7 @@ kubectl -n backup-recovery-demo port-forward svc/backup-recovery-demo-app 8080:8
 2. In a second terminal, run continuous writes:
 
 ```bash
-APP_URL=http://localhost:8080 WRITE_INTERVAL_SECONDS=0.1 MAX_WRITES=100 ./scripts/write-loop.sh
+APP_URL=http://localhost:8080 WRITE_INTERVAL_SECONDS=0.1 MAX_WRITES=1000 ./scripts/write-loop.sh
 ```
 
 3. Ensure `k8s/backup-job.yaml` has `BACKUP_MODE=crash-consistent`, then trigger backup:
@@ -476,7 +476,7 @@ curl -s http://localhost:8080/read
 1. Keep port-forward running and restart the write loop:
 
 ```bash
-APP_URL=http://localhost:8080 WRITE_INTERVAL_SECONDS=0.1 MAX_WRITES=100 ./scripts/write-loop.sh
+APP_URL=http://localhost:8080 WRITE_INTERVAL_SECONDS=0.1 MAX_WRITES=1000 ./scripts/write-loop.sh
 ```
 
 2. Set `k8s/backup-job.yaml` to `BACKUP_MODE=application-consistent`, then trigger backup:
@@ -514,7 +514,25 @@ curl -s http://localhost:8080/read
 Application-consistent mode provides a cleaner coordinated restore point.
 
 In a fast local environment, the freeze window may be too short to observe clearly.
-Setting SLEEP_BEFORE_COPY_SECONDS=3 in k8s/backup-job.yaml makes the difference easier to see during the application-consistent scenario.
+Setting `SLEEP_BEFORE_COPY_SECONDS=3` in `k8s/backup-job.yaml` or running `DEMO_MODE=application-consistent SLEEP_BEFORE_COPY_SECONDS_FOR_DEMO=3 ./scripts/run-consistency-demo.sh` makes the difference easier to see during the application-consistent scenario.
+
+## Consistency Comparison Helper
+
+Use `scripts/run-consistency-demo.sh` to execute the consistency comparison flow end-to-end while keeping the existing manual workflow available.
+
+Crash-consistent:
+
+```bash
+DEMO_MODE=crash-consistent ./scripts/run-consistency-demo.sh
+```
+
+Application-consistent:
+
+```bash
+DEMO_MODE=application-consistent SLEEP_BEFORE_COPY_SECONDS_FOR_DEMO=3 ./scripts/run-consistency-demo.sh
+```
+
+Extending `SLEEP_BEFORE_COPY_SECONDS_FOR_DEMO` increases freeze-window visibility in fast local environments.
 
 ## What these scenarios demonstrate
 
