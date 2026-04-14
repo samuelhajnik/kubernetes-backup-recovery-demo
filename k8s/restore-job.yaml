@@ -15,6 +15,13 @@ spec:
       containers:
         - name: restore
           image: alpine:3.20
+          env:
+            - name: FAIL_BEFORE_RESTORE
+              value: "false"
+            - name: FAIL_AFTER_RESTORE_COPY
+              value: "false"
+            - name: SLEEP_BEFORE_RESTORE_SECONDS
+              value: "0"
           command: ["/bin/sh", "-c"]
           args:
             - |

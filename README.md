@@ -4,8 +4,8 @@
 
 - Stateful application backup and recovery workflow in Kubernetes.
 - Crash-consistent and application-consistent backup modes, and how they differ in behavior during active writes.
-- Versioned backups retained in backup storage.
-- Metadata and checksum generation for each backup.
+- Versioned backups stored and retained in backup storage.
+- Metadata and checksum generation for each backup file.
 - Restore-time integrity verification using checksum comparison.
 - Scheduled backups using a CronJob for automated backup execution.
 - Failure scenarios that validate recovery and error handling behavior.
@@ -13,6 +13,8 @@
 ## Goal
 
 Explore backup and recovery in Kubernetes with emphasis on **data consistency**, **failure scenarios**, and **system recovery**—what breaks, what must be preserved, and how to validate that a restore is trustworthy.
+
+This demo focuses not just on taking backups, but on proving that restore is correct, observable, and trustworthy.
 
 ## Inspiration
 
@@ -28,8 +30,7 @@ Distributed systems fail in layered ways: pods restart, nodes drain or die, stor
 
 Initial scope:
 
-- Run a **stateful workload** in Kubernetes with application data stored on a **PersistentVolumeClaim (PVC)**, ensuring it survives pod restarts.
-- Treat this **PVC-backed storage** as the primary source of truth for application data.
+- Run a **stateful workload** in Kubernetes with application data stored on a **PersistentVolumeClaim (PVC)**, ensuring it survives pod restarts and serves as the primary source of truth.
 - Implement a **backup workflow** using a Kubernetes Job that copies data from the application PVC to a separate backup storage PVC.
 - Define an explicit **restore workflow** that restores data from backup storage, verifies integrity, and makes it available to the running application.
 
@@ -68,7 +69,7 @@ Restore flow: a restore Job copies data from the backup storage PVC back into th
 
 ## Status
 
-MVP implemented — backup and restore workflow with checksum verification is functional and has been validated in a Kubernetes environment.
+MVP implemented — backup and restore workflow with checksum verification is functional and has been validated in a local Kubernetes cluster (kind).
 
 The demo has been validated end-to-end, including backup, failure simulation, and restore flows.
 
@@ -183,19 +184,46 @@ kubectl -n backup-recovery-demo describe job restore-data-job
 curl -s http://localhost:8080/backup-status
 ```
 
-`/backup-status` returns the latest known backup result (mode, backup file, checksum, and success/failure message), or `status: unknown` if no backup has run yet.
+`/backup-status` returns the latest known backup or restore result (operation details such as mode, file name, checksum, and success/failure message), or `status: unknown` if no operation has run yet.
 
 ### Backup Status Endpoint
 
-The application exposes a `/backup-status` endpoint that returns information about the latest backup:
+The application exposes a `/backup-status` endpoint that returns information about the latest backup or restore operation.
 
-- status (`success`/`failure`/`unknown`)
-- mode (`crash-consistent`/`application-consistent`)
-- backup file name
-- checksum
-- timestamp
+Common fields:
+- `operation` (`backup`/`restore`)
+- `status` (`success`/`failure`/`unknown`)
+- `timestamp`
+- `message`
+- `duration_ms`
 
-This demonstrates how a system can expose backup observability and operational state to external systems.
+Backup-specific fields:
+- `mode` (`crash-consistent`/`application-consistent`)
+- `backup_file`
+- `checksum`
+- `bytes_written`
+
+Restore-specific fields:
+- `restored_file`
+- `checksum_valid`
+
+Example successful backup response:
+
+```json
+{
+  "operation": "backup",
+  "status": "success",
+  "timestamp": "2026-04-13T20:15:42Z",
+  "mode": "crash-consistent",
+  "backup_file": "data-2026-04-13T20-15-42Z.jsonl",
+  "checksum": "8c58d1570f8ea1e4268259c1d2697f1771495f07f937bf84b67fde7a2f9f26eb",
+  "message": "backup completed",
+  "duration_ms": 2000,
+  "bytes_written": 245
+}
+```
+
+These fields make it easier to reason about backup health, runtime, and data movement without adding a full metrics stack.
 
 ## Scheduled Backups
 
@@ -212,6 +240,53 @@ Backups are stored as versioned backup files (for example `data-2026-04-10T18-30
 Restore automatically selects the latest backup and verifies it using the checksum from the matching metadata file.
 
 Backups are not automatically pruned in this demo. Real systems require retention policies, for example keeping the last N backups or using time-based retention windows.
+
+## Failure Injection (Testing Recovery Behavior)
+
+Failure injection is supported through environment variables on the backup and restore Jobs.
+
+- Backup Job: `FAIL_BEFORE_COPY`, `FAIL_AFTER_COPY`, `SLEEP_BEFORE_COPY_SECONDS`
+- Restore Job: `FAIL_BEFORE_RESTORE`, `FAIL_AFTER_RESTORE_COPY`, `SLEEP_BEFORE_RESTORE_SECONDS`
+
+Defaults are non-disruptive (`false` and `0`), so normal behavior is unchanged.
+
+### Example 1: backup failure before copy
+
+Edit `k8s/backup-job.yaml` and set:
+
+```yaml
+- name: FAIL_BEFORE_COPY
+  value: "true"
+```
+
+Then run:
+
+```bash
+kubectl -n backup-recovery-demo delete job backup-data-job --ignore-not-found
+kubectl apply -f k8s/backup-job.yaml
+kubectl -n backup-recovery-demo wait --for=condition=failed job/backup-data-job --timeout=60s
+kubectl -n backup-recovery-demo logs job/backup-data-job
+```
+
+### Example 2: restore failure after copy
+
+Edit `k8s/restore-job.yaml` and set:
+
+```yaml
+- name: FAIL_AFTER_RESTORE_COPY
+  value: "true"
+```
+
+Then run:
+
+```bash
+kubectl -n backup-recovery-demo delete job restore-data-job --ignore-not-found
+kubectl apply -f k8s/restore-job.yaml
+kubectl -n backup-recovery-demo wait --for=condition=failed job/restore-data-job --timeout=60s
+kubectl -n backup-recovery-demo logs job/restore-data-job
+```
+
+After testing failure scenarios, reset the environment variables back to `"false"` to restore normal behavior.
 
 ## Failure Scenarios to Test
 
@@ -312,7 +387,7 @@ sequenceDiagram
 
     App->>PVC: Write data
     Backup->>PVC: Read data
-    Backup->>Storage: Write snapshot (data-<timestamp>)
+    Backup->>Storage: Write backup file (data-<timestamp>)
     Backup->>Storage: Write metadata + checksum
     Backup->>Storage: Update backup-status.json
 ```
@@ -328,10 +403,10 @@ sequenceDiagram
     participant PVC as App PVC (/data)
     participant App
 
-    Restore->>Storage: Select latest snapshot
+    Restore->>Storage: Select latest backup file
     Restore->>Storage: Read metadata
-    Restore->>PVC:          Restore data
-    Restore->>PVC:          Verify checksum
+    Restore->>PVC: Restore data
+    Restore->>PVC: Verify checksum
     App->>PVC: Read restored data
 ```
 

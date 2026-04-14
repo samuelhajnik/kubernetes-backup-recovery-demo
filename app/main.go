@@ -209,7 +209,7 @@ func (s *server) handleBackupStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var payload map[string]any
+	var payload any
 	if err := json.Unmarshal(content, &payload); err != nil {
 		writeError(w, http.StatusInternalServerError, "backup status file is invalid")
 		return

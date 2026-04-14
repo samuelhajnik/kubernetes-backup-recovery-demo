@@ -20,6 +20,12 @@ spec:
               value: crash-consistent
             - name: APP_BASE_URL
               value: http://backup-recovery-demo-app.backup-recovery-demo.svc.cluster.local:8080
+            - name: FAIL_BEFORE_COPY
+              value: "false"
+            - name: FAIL_AFTER_COPY
+              value: "false"
+            - name: SLEEP_BEFORE_COPY_SECONDS
+              value: "0"
           command: ["/bin/sh", "-c"]
           args:
             - |
