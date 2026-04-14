@@ -412,6 +412,110 @@ sequenceDiagram
 
 ---
 
+## Consistency Comparison Scenario
+
+Use this scenario to compare crash-consistent and application-consistent backups while writes are happening.
+
+- Crash-consistent mode captures storage state without coordinating with the app.
+- Application-consistent mode coordinates backup with the app by freezing writes briefly.
+
+Write-loop helper:
+
+```bash
+APP_URL=http://localhost:8080 WRITE_INTERVAL_SECONDS=0.1 MAX_WRITES=50 ./scripts/write-loop.sh
+```
+
+### A) Crash-consistent under active writes
+
+1. Start port-forward:
+
+```bash
+kubectl -n backup-recovery-demo port-forward svc/backup-recovery-demo-app 8080:8080
+```
+
+2. In a second terminal, run continuous writes:
+
+```bash
+APP_URL=http://localhost:8080 WRITE_INTERVAL_SECONDS=0.1 MAX_WRITES=100 ./scripts/write-loop.sh
+```
+
+3. Ensure `k8s/backup-job.yaml` has `BACKUP_MODE=crash-consistent`, then trigger backup:
+
+```bash
+kubectl -n backup-recovery-demo delete job backup-data-job --ignore-not-found
+kubectl apply -f k8s/backup-job.yaml
+kubectl -n backup-recovery-demo wait --for=condition=complete job/backup-data-job --timeout=60s
+```
+
+4. Observe and compare writer output, backup logs, and `/backup-status`:
+
+```bash
+kubectl -n backup-recovery-demo logs job/backup-data-job
+curl -s http://localhost:8080/backup-status
+```
+
+5. Truncate live app data before restore to prove recovery comes from backup:
+
+```bash
+POD=$(kubectl -n backup-recovery-demo get pod -l app=backup-recovery-demo-app -o jsonpath='{.items[0].metadata.name}')
+kubectl -n backup-recovery-demo exec "$POD" -- sh -c ': > /data/data.jsonl'
+curl -s http://localhost:8080/read
+```
+
+6. Run restore and compare restored `/read` output:
+
+```bash
+kubectl -n backup-recovery-demo delete job restore-data-job --ignore-not-found
+kubectl apply -f k8s/restore-job.yaml
+kubectl -n backup-recovery-demo wait --for=condition=complete job/restore-data-job --timeout=60s
+curl -s http://localhost:8080/read
+```
+
+### B) Application-consistent under active writes
+
+1. Keep port-forward running and restart the write loop:
+
+```bash
+APP_URL=http://localhost:8080 WRITE_INTERVAL_SECONDS=0.1 MAX_WRITES=100 ./scripts/write-loop.sh
+```
+
+2. Set `k8s/backup-job.yaml` to `BACKUP_MODE=application-consistent`, then trigger backup:
+
+```bash
+kubectl -n backup-recovery-demo delete job backup-data-job --ignore-not-found
+kubectl apply -f k8s/backup-job.yaml
+kubectl -n backup-recovery-demo wait --for=condition=complete job/backup-data-job --timeout=60s
+```
+
+3. Observe and compare writer output, backup logs, and `/backup-status` (during freeze, some write-loop requests may return HTTP `409`, which is expected):
+
+```bash
+kubectl -n backup-recovery-demo logs job/backup-data-job
+curl -s http://localhost:8080/backup-status
+```
+
+4. Truncate live app data before restore to prove recovery comes from backup:
+
+```bash
+POD=$(kubectl -n backup-recovery-demo get pod -l app=backup-recovery-demo-app -o jsonpath='{.items[0].metadata.name}')
+kubectl -n backup-recovery-demo exec "$POD" -- sh -c ': > /data/data.jsonl'
+curl -s http://localhost:8080/read
+```
+
+5. Run restore and compare restored `/read` output:
+
+```bash
+kubectl -n backup-recovery-demo delete job restore-data-job --ignore-not-found
+kubectl apply -f k8s/restore-job.yaml
+kubectl -n backup-recovery-demo wait --for=condition=complete job/restore-data-job --timeout=60s
+curl -s http://localhost:8080/read
+```
+
+Application-consistent mode provides a cleaner coordinated restore point.
+
+In a fast local environment, the freeze window may be too short to observe clearly.
+Setting SLEEP_BEFORE_COPY_SECONDS=3 in k8s/backup-job.yaml makes the difference easier to see during the application-consistent scenario.
+
 ## What these scenarios demonstrate
 
 - Backups are only useful when restore is validated end-to-end.
