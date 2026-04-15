@@ -73,9 +73,9 @@ In contrast, storage snapshots move these concerns into the storage layer, makin
 ```mermaid
 flowchart LR
     A["App Pod<br/>/write, /read, /backup-status"]
-    B[("App Data PVC<br/>/data")]
+    B["App Data PVC<br/>/data"]
     C["Backup Job"]
-    D[("Backup Storage PVC<br/>/backup")]
+    D["Backup Storage PVC<br/>/backup"]
     E["Restore Job"]
     F["CronJob<br/>(optional)"]
 
