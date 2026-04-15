@@ -58,13 +58,38 @@ DEMO_MODE=application-consistent SLEEP_BEFORE_COPY_SECONDS_FOR_DEMO=3 ./scripts/
 
 ### Crash-consistent
 
-- Writes continue while backup runs.
-- Backup captures an uncoordinated point in time.
+- Writes continue with no application-level coordination.
+- Backups reflect a best-effort point in time under active write pressure.
 
 ### Application-consistent
 
+- Backup briefly coordinates with the app via freeze/unfreeze.
 - Some writes may return HTTP `409` during the freeze window.
-- Backup is taken from a coordinated restore point.
+
+## Visual Comparison
+
+### Crash-consistent (no coordination)
+
+- Writes continue during backup.
+- Backup is taken without pausing application writes.
+- Resulting backup point can include in-flight state.
+
+![Crash-consistent run](docs/screenshots/crash-consistent-run.png)
+
+### Application-consistent (with coordination)
+
+- Backup coordinates with the application using a short freeze window.
+- Some write attempts are rejected with HTTP `409` while frozen.
+- Backup is captured from a cleaner, coordinated restore point.
+
+![Application-consistent run](docs/screenshots/application-consistent-run.png)
+
+### Observability and outcome
+
+- Backup/restore status, write outcomes, and verification signals are visible in one flow.
+- Summary output includes write response counts and restore verification context.
+
+![Application-consistent summary](docs/screenshots/application-consistent-summary.png)
 
 ## Real-world relevance
 
@@ -75,6 +100,15 @@ This demo reflects problems that appear in real systems:
 - Backup tooling and control planes that must choose between crash-consistent and application-consistent behavior
 
 Understanding this trade-off matters when restore correctness is more important than simply taking a backup.
+
+## Key Insight
+
+Backups are easy to run, but correctness is defined by restore.
+
+This demo shows that:
+- crash-consistent backups preserve availability but may capture inconsistent state
+- application-consistent backups trade availability for a reliable restore point
+- verification (checksums, restore tests) is essential
 
 ## Repository Guide
 
