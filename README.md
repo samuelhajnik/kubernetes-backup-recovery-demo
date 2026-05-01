@@ -1,5 +1,7 @@
 # Kubernetes Backup & Recovery Demo
 
+[![CI](https://github.com/samuelhajnik/kubernetes-backup-recovery-demo/actions/workflows/ci.yml/badge.svg)](https://github.com/samuelhajnik/kubernetes-backup-recovery-demo/actions/workflows/ci.yml)
+
 This repository demonstrates a core reliability principle for stateful Kubernetes systems:
 
 > Backup success does not guarantee recovery success.
@@ -284,6 +286,10 @@ Current limitations:
 These limitations are intentional. The purpose of the repo is to make backup and restore trade-offs visible in a small, repeatable demo.
 
 ---
+
+## CI
+
+GitHub Actions runs on pushes and pull requests to `main`. The workflow verifies the Go code with `go test` and `go vet`, lints the Kubernetes YAML manifests, and validates them against Kubernetes schemas.
 
 ## Summary
 
