@@ -176,6 +176,52 @@ func TestAppendLineReturnsErrorForInvalidStoragePath(t *testing.T) {
 	}
 }
 
+// TestFileBackupRestoreRoundTrip simulates copy-out → delete live file → copy-back without Kubernetes.
+func TestFileBackupRestoreRoundTrip(t *testing.T) {
+	base := t.TempDir()
+	dataFile := filepath.Join(base, "data", "data.jsonl")
+	if err := ensureDataPath(dataFile); err != nil {
+		t.Fatalf("ensureDataPath: %v", err)
+	}
+	lines := [][]byte{
+		[]byte(`{"verify":"local-restore","n":1}`),
+		[]byte(`{"verify":"local-restore","n":2}`),
+	}
+	for _, line := range lines {
+		if err := appendLine(dataFile, line); err != nil {
+			t.Fatalf("appendLine: %v", err)
+		}
+	}
+	before, err := os.ReadFile(dataFile)
+	if err != nil {
+		t.Fatalf("read before backup: %v", err)
+	}
+	backupFile := filepath.Join(base, "backup", "snap.jsonl")
+	if err := os.MkdirAll(filepath.Dir(backupFile), 0o755); err != nil {
+		t.Fatalf("mkdir backup: %v", err)
+	}
+	if err := os.WriteFile(backupFile, before, 0o644); err != nil {
+		t.Fatalf("write backup: %v", err)
+	}
+	if err := os.Remove(dataFile); err != nil {
+		t.Fatalf("remove live data: %v", err)
+	}
+	restored, err := os.ReadFile(backupFile)
+	if err != nil {
+		t.Fatalf("read backup: %v", err)
+	}
+	if err := os.WriteFile(dataFile, restored, 0o644); err != nil {
+		t.Fatalf("restore copy: %v", err)
+	}
+	after, err := os.ReadFile(dataFile)
+	if err != nil {
+		t.Fatalf("read after restore: %v", err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("bytes mismatch after restore:\nwant %q\ngot  %q", string(before), string(after))
+	}
+}
+
 func newTestServer(t *testing.T) *server {
 	t.Helper()
 

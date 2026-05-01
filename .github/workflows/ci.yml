@@ -28,6 +28,17 @@ jobs:
       - name: Run vet
         run: go vet ./...
 
+      - name: Syntax-check shell scripts
+        run: |
+          set -euo pipefail
+          bash -n scripts/verify-restore.sh
+
+      - name: ShellCheck (restore verification script)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq shellcheck
+          shellcheck scripts/verify-restore.sh
+
   validate-manifests:
     name: Validate Kubernetes manifests
     runs-on: ubuntu-latest

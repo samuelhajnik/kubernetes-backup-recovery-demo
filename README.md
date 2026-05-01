@@ -163,6 +163,26 @@ Backup and restore status, write outcomes, and verification signals are visible 
 
 ---
 
+## Restore Verification
+
+The demo includes a restore verification script that proves **recovery**, not only backup Job completion:
+
+```bash
+./scripts/verify-restore.sh
+```
+
+The script resets application data, writes known records, runs the backup Job, wipes live data, runs the restore Job, and compares `GET /read` after restore with the baseline captured before backup. **PASS** means the application-visible records match; **FAIL** exits non-zero.
+
+Prerequisites: a reachable Kubernetes cluster, manifests applied as shown in [Quick Start](#quick-start), the demo app image available to the cluster, `kubectl`, `curl`, `python3`, and port-forwarding to the app service:
+
+```bash
+kubectl -n backup-recovery-demo port-forward svc/backup-recovery-demo-app 8080:8080
+```
+
+This path is intended for local verification. CI validates the script syntax and continues to run Go tests and manifest checks without requiring a Kubernetes cluster.
+
+---
+
 ## Key Trade-offs and Lessons
 
 ### 1. Crash-consistent backups preserve availability
@@ -289,7 +309,9 @@ These limitations are intentional. The purpose of the repo is to make backup and
 
 ## CI
 
-GitHub Actions runs on pushes and pull requests to `main`. The workflow verifies the Go code with `go test` and `go vet`, lints the Kubernetes YAML manifests, and validates them against Kubernetes schemas.
+GitHub Actions runs on pushes and pull requests to `main`.
+
+The workflow verifies the Go code with `go test` and `go vet`, lints the Kubernetes YAML manifests, validates them against Kubernetes schemas, and checks the restore verification script for shell syntax issues.
 
 ## Summary
 
