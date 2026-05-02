@@ -14,11 +14,29 @@ The step-by-step sections below are a **manual** path: they walk through `kubect
 
 ## How to Run & Demo (manual path)
 
+### Manual path prerequisites
+
+The manual steps assume:
+
+- Docker is running
+- `kind` is installed
+- `kubectl` is installed
+- A local kind cluster named `backup-recovery-demo` exists
+- `kubectl` is configured to use that cluster (context `kind-backup-recovery-demo`)
+
+If you need to create the cluster:
+
+```bash
+kind create cluster --name backup-recovery-demo
+kubectl config use-context kind-backup-recovery-demo
+kubectl cluster-info
+```
+
 ### 1) Build and load image
 
 ```bash
 docker build -t kubernetes-backup-recovery-demo-app:latest ./app
-kind load docker-image kubernetes-backup-recovery-demo-app:latest
+kind load docker-image kubernetes-backup-recovery-demo-app:latest --name backup-recovery-demo
 ```
 
 ### 2) Deploy everything
@@ -39,6 +57,8 @@ kubectl -n backup-recovery-demo get pods,pvc,svc
 ### 3) Generate data
 
 ```bash
+kubectl -n backup-recovery-demo rollout status deployment/backup-recovery-demo-app --timeout=180s
+kubectl -n backup-recovery-demo wait --for=condition=Ready pod -l app=backup-recovery-demo-app --timeout=180s
 kubectl -n backup-recovery-demo port-forward svc/backup-recovery-demo-app 8080:8080
 ```
 
