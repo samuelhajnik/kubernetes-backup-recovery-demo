@@ -9,7 +9,7 @@ on:
 
 jobs:
   verify-go:
-    name: Verify Go code
+    name: Verify Go code and scripts
     runs-on: ubuntu-latest
 
     steps:
@@ -25,19 +25,35 @@ jobs:
       - name: Run tests
         run: go test ./...
 
+      - name: Test restore scenarios
+        run: ./scripts/test-restore-scenarios.sh
+
       - name: Run vet
         run: go vet ./...
 
       - name: Syntax-check shell scripts
         run: |
           set -euo pipefail
-          bash -n scripts/verify-restore.sh
 
-      - name: ShellCheck (restore verification script)
+          bash -n scripts/run-backup-recovery-demo.sh
+          bash -n scripts/run-consistency-demo.sh
+          bash -n scripts/write-loop.sh
+          bash -n scripts/test-restore-scenarios.sh
+          bash -n jobs/backup.sh
+          bash -n jobs/restore.sh
+
+      - name: ShellCheck shell scripts
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq shellcheck
-          shellcheck scripts/verify-restore.sh
+
+          shellcheck \
+            scripts/run-backup-recovery-demo.sh \
+            scripts/run-consistency-demo.sh \
+            scripts/write-loop.sh \
+            scripts/test-restore-scenarios.sh \
+            jobs/backup.sh \
+            jobs/restore.sh
 
   validate-manifests:
     name: Validate Kubernetes manifests

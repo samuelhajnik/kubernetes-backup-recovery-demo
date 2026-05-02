@@ -1,6 +1,18 @@
 # Demo Guide
 
-## How to Run & Demo
+## Recommended local reviewer workflow
+
+The main way to run the full backup-strategy comparison on a local cluster is:
+
+```bash
+./scripts/run-backup-recovery-demo.sh --compare
+```
+
+This script creates or reuses a `kind` cluster, builds and loads the demo image, runs both crash-consistent and application-consistent scenarios under active writes, restores from backup, verifies recovery through the application API, and prints a side-by-side comparison summary. See the repository [README](../README.md) for field definitions and expected behavior.
+
+The step-by-step sections below are a **manual** path: they walk through `kubectl` and `curl` for lower-level exploration and learning. They are not the primary reviewer workflow.
+
+## How to Run & Demo (manual path)
 
 ### 1) Build and load image
 
@@ -110,11 +122,13 @@ Backups are not automatically pruned in this demo. Real systems require retentio
 - Restore workflows must fail clearly on missing or invalid backup artifacts.
 - Operational confidence comes from regularly exercising failure and recovery paths.
 
-## Consistency Comparison Helper
+## Consistency helper (lower-level, single mode)
 
-Use `scripts/run-consistency-demo.sh` to execute the consistency comparison flow end-to-end while keeping the existing manual workflow available.
+`scripts/run-consistency-demo.sh` is a **lower-level helper** invoked by `run-backup-recovery-demo.sh`. It is not the main user-facing entry point. Use it when you already have a cluster, port-forward, and matching manifests loaded, and you want to **debug one mode in isolation** (for example a single crash-consistent or application-consistent run) without the full kind orchestration.
 
-Crash-consistent:
+For the full two-strategy comparison, prefer `./scripts/run-backup-recovery-demo.sh --compare` (see the top of this guide).
+
+Crash-consistent (helper only; requires app reachable as for the manual path above):
 
 ```bash
 DEMO_MODE=crash-consistent ./scripts/run-consistency-demo.sh

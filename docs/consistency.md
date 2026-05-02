@@ -21,7 +21,17 @@ APP_URL=http://localhost:8080 WRITE_INTERVAL_SECONDS=0.1 MAX_WRITES=50 ./scripts
 
 ## Consistency Comparison Scenario
 
-Use this scenario to compare crash-consistent and application-consistent backups while writes are happening.
+**Recommended:** to compare both strategies in one run with restore verification and a printed summary, use:
+
+```bash
+./scripts/run-backup-recovery-demo.sh --compare
+```
+
+That is the primary local reviewer workflow (see the repository [README](../README.md)).
+
+The subsections **A** and **B** below are an **advanced, manual** walkthrough. They are useful for step-by-step exploration with `kubectl` and `curl` when you want to control each step yourself. They are not the default path for comparing strategies.
+
+At a high level:
 
 - Crash-consistent mode captures storage state without coordinating with the app.
 - Application-consistent mode coordinates backup with the app by freezing writes briefly.
@@ -117,6 +127,7 @@ In a fast local environment, the freeze window may be too short to observe clear
 Use either:
 
 - `SLEEP_BEFORE_COPY_SECONDS=3` in `k8s/backup-job.yaml`, or
-- `DEMO_MODE=application-consistent SLEEP_BEFORE_COPY_SECONDS_FOR_DEMO=3 ./scripts/run-consistency-demo.sh`
+- the lower-level helper (single mode, with cluster and port-forward already set up):  
+  `DEMO_MODE=application-consistent SLEEP_BEFORE_COPY_SECONDS_FOR_DEMO=3 ./scripts/run-consistency-demo.sh`
 
-to make freeze-window effects easier to see.
+`run-consistency-demo.sh` is a focused debugging helper, not a replacement for `./scripts/run-backup-recovery-demo.sh --compare` when you want the full automated comparison.

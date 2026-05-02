@@ -1,14 +1,30 @@
 #!/bin/sh
 set -eu
 
-TARGET_FILE="/data/data.jsonl"
+# Defaults match the Kubernetes Job mount layout; override for local/CI scenario tests.
+BACKUP_ROOT="${BACKUP_ROOT:-/backup}"
+TARGET_FILE="${TARGET_FILE:-/data/data.jsonl}"
+STATUS_FILE="${STATUS_FILE:-$BACKUP_ROOT/backup-status.json}"
 FAIL_BEFORE_RESTORE="${FAIL_BEFORE_RESTORE:-false}"
 FAIL_AFTER_RESTORE_COPY="${FAIL_AFTER_RESTORE_COPY:-false}"
 SLEEP_BEFORE_RESTORE_SECONDS="${SLEEP_BEFORE_RESTORE_SECONDS:-0}"
-STATUS_FILE="/backup/backup-status.json"
 STATUS_MESSAGE="restore failed"
 CHECKSUM_VALID=false
 START_TIME_SEC="$(date +%s)"
+
+checksum_sha256() {
+  file="$1"
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$file" | awk '{print $1}'
+    return 0
+  fi
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$file" | awk '{print $1}'
+    return 0
+  fi
+  echo "ERROR: neither sha256sum nor shasum is available; cannot verify backup checksum" >&2
+  return 1
+}
 
 cleanup() {
   exit_code="$1"
@@ -48,11 +64,15 @@ if [ "$FAIL_BEFORE_RESTORE" = "true" ]; then
   exit 1
 fi
 
-BACKUP_FILE="$(ls -1 /backup/data-*.jsonl 2>/dev/null | sort -r | head -n 1)"
+BACKUP_FILE="$(
+  find "$BACKUP_ROOT" -maxdepth 1 -type f -name 'data-*.jsonl' -print 2>/dev/null \
+    | sort -r \
+    | head -n 1
+)"
 
 if [ -z "$BACKUP_FILE" ]; then
-  STATUS_MESSAGE="no versioned backup files found in /backup"
-  echo "restore failed: no versioned backup files found in /backup" >&2
+  STATUS_MESSAGE="no versioned backup files found in $BACKUP_ROOT"
+  echo "restore failed: no versioned backup files found in $BACKUP_ROOT" >&2
   exit 1
 fi
 
@@ -62,7 +82,7 @@ if [ ! -f "$BACKUP_FILE" ]; then
   exit 1
 fi
 
-METADATA_FILE="/backup/metadata-$(basename "$BACKUP_FILE" | sed 's/^data-//; s/\.jsonl$//').json"
+METADATA_FILE="$BACKUP_ROOT/metadata-$(basename "$BACKUP_FILE" | sed 's/^data-//; s/\.jsonl$//').json"
 
 if [ ! -f "$METADATA_FILE" ]; then
   STATUS_MESSAGE="metadata file not found at $METADATA_FILE"
@@ -85,7 +105,7 @@ if [ "$FAIL_AFTER_RESTORE_COPY" = "true" ]; then
   exit 1
 fi
 
-ACTUAL_CHECKSUM="$(sha256sum "$TARGET_FILE" | awk '{print $1}')"
+ACTUAL_CHECKSUM="$(checksum_sha256 "$TARGET_FILE")" || exit 1
 
 if [ "$ACTUAL_CHECKSUM" != "$EXPECTED_CHECKSUM" ]; then
   STATUS_MESSAGE="checksum mismatch (expected=$EXPECTED_CHECKSUM actual=$ACTUAL_CHECKSUM)"

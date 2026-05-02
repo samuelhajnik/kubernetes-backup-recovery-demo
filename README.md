@@ -16,10 +16,12 @@ The goal is not only to run a Kubernetes backup Job. The goal is to make backup 
 
 This project compares two backup strategies for a stateful Kubernetes workload:
 
-| Backup Strategy | Behavior | Main Trade-off |
-|-----------------|----------|----------------|
-| Crash-consistent backup | Copies state while the application keeps accepting writes | Preserves availability, but may capture in-flight state |
-| Application-consistent backup | Coordinates with the application before copying state | Produces a cleaner restore point, but may temporarily reject writes |
+
+| Backup Strategy               | Behavior                                                  | Main Trade-off                                                      |
+| ----------------------------- | --------------------------------------------------------- | ------------------------------------------------------------------- |
+| Crash-consistent backup       | Copies state while the application keeps accepting writes | Preserves availability, but may capture in-flight state             |
+| Application-consistent backup | Coordinates with the application before copying state     | Produces a cleaner restore point, but may temporarily reject writes |
+
 
 The main lesson is that backup success is not the same as recovery success.
 
@@ -38,18 +40,6 @@ That is not enough for stateful systems.
 Stateful applications may have in-flight writes, cached state, pending background work, or multiple pieces of data that need to stay consistent with each other. If a backup captures state at the wrong moment, the restored system may start but contain incorrect or incomplete data.
 
 This demo makes that problem visible by comparing backup behavior while writes are actively happening.
-
----
-
-## Demo Flow
-
-The demo follows a simple three-step flow:
-
-1. Generate writes against the application.
-2. Trigger a backup while writes are active.
-3. Restore the backup and verify the restored state.
-
-The same flow is used to compare crash-consistent and application-consistent behavior.
 
 ---
 
@@ -79,29 +69,31 @@ The data plane is the PVC-backed application and backup state. The control plane
 ## Quick Start
 
 ```bash
-docker build -t kubernetes-backup-recovery-demo-app:latest ./app
-kind load docker-image kubernetes-backup-recovery-demo-app:latest
-
-kubectl apply -f k8s/namespace.yaml
-kubectl apply -f k8s/pvc.yaml
-kubectl apply -f k8s/backup-pvc.yaml
-kubectl apply -f k8s/app-deployment.yaml
-kubectl apply -f k8s/app-service.yaml
-kubectl apply -f k8s/scripts-configmap.yaml
-
-kubectl -n backup-recovery-demo port-forward svc/backup-recovery-demo-app 8080:8080
+./scripts/run-backup-recovery-demo.sh --compare
 ```
 
-Run the application-consistent demo:
+This is the recommended local reviewer workflow. It:
+
+- creates or reuses a local kind cluster
+- builds and loads the demo app image
+- runs crash-consistent and application-consistent scenarios
+- generates writes during backup
+- restores from backup
+- verifies restored data through the application API
+- prints a comparison summary in one place
+
+Optional commands:
 
 ```bash
-DEMO_MODE=application-consistent SLEEP_BEFORE_COPY_SECONDS_FOR_DEMO=3 ./scripts/run-consistency-demo.sh
+./scripts/run-backup-recovery-demo.sh --crash-consistent
+./scripts/run-backup-recovery-demo.sh --application-consistent
 ```
 
-Run the crash-consistent demo:
+Useful environment variables:
 
 ```bash
-DEMO_MODE=crash-consistent SLEEP_BEFORE_COPY_SECONDS_FOR_DEMO=3 ./scripts/run-consistency-demo.sh
+KEEP_CLUSTER=true ./scripts/run-backup-recovery-demo.sh --compare
+BACKUP_START_MIN_RECORDS=50 ./scripts/run-backup-recovery-demo.sh --compare
 ```
 
 ---
@@ -110,13 +102,13 @@ DEMO_MODE=crash-consistent SLEEP_BEFORE_COPY_SECONDS_FOR_DEMO=3 ./scripts/run-co
 
 ### Crash-consistent backup
 
-In crash-consistent mode, writes continue while the backup is being taken.
+In crash-consistent mode, writes are not frozen while backup is running.
 
 You should observe:
 
-- writes continue without application-level coordination
-- the backup is taken while the system is under active write pressure
-- no HTTP `409` responses are expected from freeze logic
+- `writes rejected during backup/freeze` should be `0`
+- `records added while backup was in progress` should usually be greater than `0`
+- `restored records after restore` should match `records captured in backup`
 
 This approach preserves availability because the application does not stop accepting writes. The trade-off is that the backup may capture in-flight or partially coordinated state.
 
@@ -124,64 +116,67 @@ This approach preserves availability because the application does not stop accep
 
 ### Application-consistent backup
 
-In application-consistent mode, the backup process briefly coordinates with the application before copying state.
+In application-consistent mode, the application is frozen before the backup copy boundary.
 
 You should observe:
 
-- the application enters a short freeze window
-- some write attempts may return HTTP `409`
-- the backup is captured from a cleaner restore point
-- the system unfreezes after the backup operation finishes
+- accepted writes stop at the backup boundary during the freeze period
+- some writes are rejected during backup/freeze
+- `records added while backup was in progress` should be `0`
+- `records captured in backup` should match `records at backup boundary`
+- `restored records after restore` should match `records captured in backup`
 
 This approach improves confidence in restore correctness. The trade-off is that write availability is temporarily reduced while the application is frozen.
 
 ---
 
-## Visual Comparison
+## Automated Backup Strategy Comparison
 
-### Crash-consistent run
-
-Writes continue during backup. The backup is taken without pausing application writes.
-
-![Crash-consistent run](docs/screenshots/crash-consistent-run.png)
-
----
-
-### Application-consistent run
-
-The backup coordinates with the application using a short freeze window. Some write attempts are rejected with HTTP `409` while frozen.
-
-![Application-consistent run](docs/screenshots/application-consistent-run.png)
-
----
-
-### Observability and outcome
-
-Backup and restore status, write outcomes, and verification signals are visible in one flow.
-
-![Application-consistent summary](docs/screenshots/application-consistent-summary.png)
-
----
-
-## Restore Verification
-
-The demo includes a restore verification script that proves **recovery**, not only backup Job completion:
+The automated local reviewer workflow is:
 
 ```bash
-./scripts/verify-restore.sh
+./scripts/run-backup-recovery-demo.sh --compare
 ```
 
-The script resets application data, writes known records, runs the backup Job, wipes live data, runs the restore Job, and compares `GET /read` after restore with the baseline captured before backup. **PASS** means the application-visible records match; **FAIL** exits non-zero.
+The script warms up the app, runs a backup while writes are active, restores the backup, verifies restored data through the application API, and prints the comparison summary.
 
-Prerequisites: a reachable Kubernetes cluster, manifests applied as shown in [Quick Start](#quick-start), the demo app image available to the cluster, `kubectl`, `curl`, `python3`, and port-forwarding to the app service:
+The human-readable comparison focuses on backup and restore proof:
 
-```bash
-kubectl -n backup-recovery-demo port-forward svc/backup-recovery-demo-app 8080:8080
-```
+- `records at backup boundary`
+- `records added while backup was in progress`
+- `records captured in backup`
+- `restored records after restore`
+- `writes rejected during backup/freeze`
+- `restore verification result`
 
-This path is intended for local verification. CI validates the script syntax and continues to run Go tests and manifest checks without requiring a Kubernetes cluster.
+### Example output
 
----
+A successful `--compare` run prints the comparison summary below:
+
+![Automated backup strategy comparison](docs/screenshots/automated-backup-strategy-comparison.png)
+
+### What the comparison shows
+
+**Crash-consistent (signals in the output)**
+
+- Writes are not frozen.
+- Writes are not rejected.
+- Records can be added while the backup copy is in progress.
+- Restored records match the backup snapshot.
+
+**Application-consistent (signals in the output)**
+
+- The app freezes before the backup copy.
+- Some writes are rejected during the freeze window.
+- Records added while backup is in progress should be `0`.
+- Records captured in backup should match the frozen backup boundary.
+- Restored records match the backup snapshot.
+
+The key difference is visible in the comparison output:
+
+- In the crash-consistent scenario, the backup starts with a fixed backup-boundary record count, but additional records can be added while the backup copy is in progress. No writes are rejected.
+- In the application-consistent scenario, the backup starts from the frozen backup-boundary state. No records are added during the backup copy, and rejected writes show the temporary availability trade-off.
+- In both scenarios, `restored records after restore` matches `records captured in backup`, so the script verifies recovery through the application instead of only checking that Kubernetes Jobs completed.
 
 ## Key Trade-offs and Lessons
 
@@ -311,7 +306,16 @@ These limitations are intentional. The purpose of the repo is to make backup and
 
 GitHub Actions runs on pushes and pull requests to `main`.
 
-The workflow verifies the Go code with `go test` and `go vet`, lints the Kubernetes YAML manifests, validates them against Kubernetes schemas, and checks the restore verification script for shell syntax issues.
+CI validates:
+
+- Go unit tests (`go test ./...`), including `/backup-status` behavior, freeze/unfreeze write rejection, and corrupted JSONL handling
+- no-cluster restore scenario tests (`scripts/test-restore-scenarios.sh`)
+- script linting (`bash -n`, ShellCheck on shell scripts under `scripts/` and `jobs/`)
+- Kubernetes manifest validation (yamllint, kubeconform)
+
+The no-cluster restore scenario test (`scripts/test-restore-scenarios.sh`) validates restore-job behavior for valid backups, checksum mismatch, missing backup files, and missing metadata. It invokes `jobs/restore.sh` against temporary directories and does not require a Kubernetes cluster.
+
+The full Kubernetes backup/restore scenario remains a documented local demo because it requires persistent-volume behavior in a real cluster; run `./scripts/run-backup-recovery-demo.sh --compare` against kind for end-to-end verification.
 
 ## Summary
 

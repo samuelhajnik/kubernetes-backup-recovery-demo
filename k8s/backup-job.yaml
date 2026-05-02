@@ -26,6 +26,8 @@ spec:
               value: "false"
             - name: SLEEP_BEFORE_COPY_SECONDS
               value: "0"
+            - name: KEEP_FROZEN_AFTER_BACKUP
+              value: "false"
           command: ["/bin/sh", "-c"]
           args:
             - |

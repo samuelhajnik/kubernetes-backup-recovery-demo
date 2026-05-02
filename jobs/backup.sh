@@ -7,6 +7,7 @@ APP_BASE_URL="${APP_BASE_URL:-http://backup-recovery-demo-app.backup-recovery-de
 FAIL_BEFORE_COPY="${FAIL_BEFORE_COPY:-false}"
 FAIL_AFTER_COPY="${FAIL_AFTER_COPY:-false}"
 SLEEP_BEFORE_COPY_SECONDS="${SLEEP_BEFORE_COPY_SECONDS:-0}"
+KEEP_FROZEN_AFTER_BACKUP="${KEEP_FROZEN_AFTER_BACKUP:-false}"
 FROZEN=0
 TIMESTAMP="$(date -u +"%Y-%m-%dT%H-%M-%SZ")"
 BACKUP_FILE="/backup/data-$TIMESTAMP.jsonl"
@@ -16,6 +17,7 @@ BACKUP_FILE_NAME="$(basename "$BACKUP_FILE")"
 CHECKSUM=""
 STATUS_MESSAGE="backup failed"
 BYTES_WRITTEN=0
+RECORDS_CAPTURED=0
 START_TIME_SEC="$(date +%s)"
 
 post_endpoint() {
@@ -43,12 +45,13 @@ cleanup() {
 
   if [ -f "$BACKUP_FILE" ]; then
     BYTES_WRITTEN="$(wc -c < "$BACKUP_FILE" | awk '{print $1}')"
+    RECORDS_CAPTURED="$(wc -l < "$BACKUP_FILE" | awk '{print $1}')"
   fi
 
-  printf '{"operation":"backup","status":"%s","timestamp":"%s","mode":"%s","backup_file":"%s","checksum":"%s","message":"%s","duration_ms":%s,"bytes_written":%s}\n' \
-    "$STATUS_VALUE" "$status_timestamp" "$BACKUP_MODE" "$BACKUP_FILE_NAME" "$CHECKSUM" "$MESSAGE" "$duration_ms" "$BYTES_WRITTEN" > "$STATUS_FILE"
+  printf '{"operation":"backup","status":"%s","timestamp":"%s","mode":"%s","backup_file":"%s","checksum":"%s","message":"%s","duration_ms":%s,"bytes_written":%s,"records_captured":%s}\n' \
+    "$STATUS_VALUE" "$status_timestamp" "$BACKUP_MODE" "$BACKUP_FILE_NAME" "$CHECKSUM" "$MESSAGE" "$duration_ms" "$BYTES_WRITTEN" "$RECORDS_CAPTURED" > "$STATUS_FILE"
 
-  if [ "$FROZEN" -eq 1 ]; then
+  if [ "$FROZEN" -eq 1 ] && [ "$KEEP_FROZEN_AFTER_BACKUP" != "true" ]; then
     echo "attempting unfreeze after backup flow"
     if post_endpoint "unfreeze"; then
       echo "app unfreeze completed"
@@ -109,7 +112,8 @@ if [ "$FAIL_AFTER_COPY" = "true" ]; then
   exit 1
 fi
 
-CHECKSUM="$(sha256sum "$SOURCE_FILE" | awk '{print $1}')"
+CHECKSUM="$(sha256sum "$BACKUP_FILE" | awk '{print $1}')"
+RECORDS_CAPTURED="$(wc -l < "$BACKUP_FILE" | awk '{print $1}')"
 
 printf '{"timestamp":"%s","source_file":"%s","backup_file":"%s","checksum":"%s"}\n' \
   "$TIMESTAMP" "$SOURCE_FILE" "$BACKUP_FILE" "$CHECKSUM" > "$METADATA_FILE"
@@ -118,11 +122,16 @@ echo "backup completed: $SOURCE_FILE -> $BACKUP_FILE"
 echo "backup file created: $BACKUP_FILE"
 echo "backup metadata written: $METADATA_FILE"
 echo "backup checksum: $CHECKSUM"
+echo "records captured in backup: $RECORDS_CAPTURED"
 STATUS_MESSAGE="backup completed"
 
 if [ "$FROZEN" -eq 1 ]; then
-  echo "requesting app unfreeze at $APP_BASE_URL/unfreeze"
-  post_endpoint "unfreeze"
-  FROZEN=0
-  echo "app unfreeze completed"
+  if [ "$KEEP_FROZEN_AFTER_BACKUP" = "true" ]; then
+    echo "app left frozen after backup because KEEP_FROZEN_AFTER_BACKUP=true"
+  else
+    echo "requesting app unfreeze at $APP_BASE_URL/unfreeze"
+    post_endpoint "unfreeze"
+    FROZEN=0
+    echo "app unfreeze completed"
+  fi
 fi

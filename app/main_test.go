@@ -93,9 +93,33 @@ func TestHandleWriteRejectsWhileFrozen(t *testing.T) {
 	}
 }
 
+func TestFreezeUnfreezeRejectsThenAllowsWrites(t *testing.T) {
+	s := newTestServer(t)
+
+	freezeRes := performRequest(t, s.handleFreeze, http.MethodPost, "/freeze", "")
+	if freezeRes.Code != http.StatusOK {
+		t.Fatalf("freeze: expected status %d, got %d", http.StatusOK, freezeRes.Code)
+	}
+
+	rejected := performRequest(t, s.handleWrite, http.MethodPost, "/write", `{"data":{"seq":1}}`)
+	if rejected.Code != http.StatusConflict {
+		t.Fatalf("while frozen: expected write status %d, got %d", http.StatusConflict, rejected.Code)
+	}
+
+	unfreezeRes := performRequest(t, s.handleUnfreeze, http.MethodPost, "/unfreeze", "")
+	if unfreezeRes.Code != http.StatusOK {
+		t.Fatalf("unfreeze: expected status %d, got %d", http.StatusOK, unfreezeRes.Code)
+	}
+
+	allowed := performRequest(t, s.handleWrite, http.MethodPost, "/write", `{"data":{"seq":2}}`)
+	if allowed.Code != http.StatusCreated {
+		t.Fatalf("after unfreeze: expected write status %d, got %d", http.StatusCreated, allowed.Code)
+	}
+}
+
 func TestHandleReadFailsOnCorruptedStoredData(t *testing.T) {
 	s := newTestServer(t)
-	if err := os.WriteFile(s.dataFile, []byte("{\"ok\":1}\nnot-json\n"), 0o644); err != nil {
+	if err := os.WriteFile(s.dataFile, []byte("{\"ok\":1}\n{not-json}\n"), 0o644); err != nil {
 		t.Fatalf("failed to seed corrupted file: %v", err)
 	}
 
@@ -107,7 +131,7 @@ func TestHandleReadFailsOnCorruptedStoredData(t *testing.T) {
 	var payload map[string]any
 	decodeResponseJSON(t, res, &payload)
 	if payload["error"] != "stored data is corrupted" {
-		t.Fatalf("expected corruption error, got %v", payload["error"])
+		t.Fatalf("expected clear corrupt JSONL error, got %v", payload["error"])
 	}
 }
 
@@ -164,6 +188,28 @@ func TestHandleBackupStatusVerificationCases(t *testing.T) {
 		decodeResponseJSON(t, res, &payload)
 		if payload["error"] != "backup status file is invalid" {
 			t.Fatalf("expected invalid status error, got %v", payload["error"])
+		}
+	})
+
+	t.Run("restore failure with checksum_valid false is visible", func(t *testing.T) {
+		s := newTestServer(t)
+		statusJSON := `{"operation":"restore","status":"failure","checksum_valid":false,"message":"checksum mismatch (expected=a actual=b)"}`
+		if err := os.WriteFile(s.backupStatusFile, []byte(statusJSON), 0o644); err != nil {
+			t.Fatalf("failed writing status file: %v", err)
+		}
+
+		res := performRequest(t, s.handleBackupStatus, http.MethodGet, "/backup-status", "")
+		if res.Code != http.StatusOK {
+			t.Fatalf("expected status %d, got %d", http.StatusOK, res.Code)
+		}
+
+		var payload map[string]any
+		decodeResponseJSON(t, res, &payload)
+		if payload["status"] != "failure" {
+			t.Fatalf("expected status=failure, got %v", payload["status"])
+		}
+		if cv, ok := payload["checksum_valid"].(bool); !ok || cv {
+			t.Fatalf("expected checksum_valid=false, got %v", payload["checksum_valid"])
 		}
 	})
 }
